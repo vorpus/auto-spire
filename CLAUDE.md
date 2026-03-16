@@ -39,9 +39,19 @@ Automating Slay the Spire 2 (Godot 4.5.1 Mono / C# / .NET 9). We're building a m
 - Keep `mise.toml` as the source of truth for runtime versions
 - Don't install tools globally — use mise, venv, or dotnet --tool-path
 
+## Sandboxing rules
+
+**All tools MUST be project-scoped. Never install globally.**
+
+- **Python packages**: Always `source .venv/bin/activate` first, then `pip install`. Never bare `pip install` outside the venv.
+- **dotnet tools**: Use `dotnet tool install --tool-path .dotnet-tools`, never `-g`
+- **Runtimes**: Managed by mise via `mise.toml`. Never install dotnet/python globally.
+- **Build the mod**: `mod/build.sh` handles everything. Uses mise for dotnet, venv python for scripts.
+
 ## What NOT to do
 
 - Don't install tools globally (no `dotnet tool install -g`, no `pip install` outside venv)
+- Don't run bare `pip install` — always activate venv first
 - Don't commit decompiled game source
 - Don't commit game binaries or assets
 - Don't pursue screenshot/CV approaches unless all other options are exhausted

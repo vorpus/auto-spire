@@ -28,13 +28,25 @@ public static class AutoSpireMod
 
     public static void Initialize()
     {
-        Log.Info("[AutoSpire] Initializing mod...");
-        _cts = new CancellationTokenSource();
-        Task.Run(() => RunServer(_cts.Token));
-        Log.Info($"[AutoSpire] HTTP server starting on port {Port}");
+        try
+        {
+            Log.Info("[AutoSpire] Mod loaded, starting HTTP server...");
+            _cts = new CancellationTokenSource();
+            var thread = new Thread(RunServerSync)
+            {
+                IsBackground = true,
+                Name = "AutoSpire-HTTP"
+            };
+            thread.Start();
+            Log.Info($"[AutoSpire] HTTP server starting on port {Port}");
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"[AutoSpire] Init error: {ex}");
+        }
     }
 
-    private static async Task RunServer(CancellationToken ct)
+    private static void RunServerSync()
     {
         try
         {
@@ -43,13 +55,20 @@ public static class AutoSpireMod
             _listener.Start();
             Log.Info($"[AutoSpire] Server listening on http://localhost:{Port}/");
 
-            while (!ct.IsCancellationRequested)
+            while (!_cts!.IsCancellationRequested)
             {
-                var context = await _listener.GetContextAsync();
-                _ = Task.Run(() => HandleRequest(context), ct);
+                try
+                {
+                    var context = _listener.GetContext(); // blocking
+                    ThreadPool.QueueUserWorkItem(_ => HandleRequest(context));
+                }
+                catch (HttpListenerException)
+                {
+                    break;
+                }
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
             Log.Error($"[AutoSpire] Server error: {ex}");
         }
@@ -82,7 +101,7 @@ public static class AutoSpireMod
         catch (Exception ex)
         {
             Log.Error($"[AutoSpire] Request error: {ex}");
-            Respond(context, 500, new { error = ex.Message });
+            try { Respond(context, 500, new { error = ex.Message }); } catch { }
         }
     }
 
@@ -290,8 +309,7 @@ public static class AutoSpireMod
                 return new { error = "invalid_target", targetId = action.TargetId };
         }
 
-        // Use the same approach as AutoSlay
-        _ = CardCmd.AutoPlay(null, card, target);
+        _ = CardCmd.AutoPlay(null!, card, target);
 
         return new { ok = true, played = card.Id.Entry };
     }

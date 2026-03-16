@@ -1,23 +1,7 @@
 """
 Create a minimal Godot 4 PCK file containing mod_manifest.json.
 
-Godot 4 PCK format:
-  - Magic: GDPC (4 bytes)
-  - Pack version: int32 (2 for Godot 4)
-  - Engine major: int32 (4)
-  - Engine minor: int32 (5)
-  - Engine patch: int32 (1)
-  - Flags: int32 (0)
-  - File offset: int64 (offset to file data)
-  - Reserved: 16 * int32 (zeros)
-  - File count: int32
-  - For each file:
-    - Path length: int32
-    - Path: UTF-8 string (padded to 4-byte alignment)
-    - File offset: int64
-    - File size: int64
-    - MD5: 16 bytes
-  - File data (aligned to next boundary)
+Godot 4 PCK format v2 (from core/io/file_access_pack.cpp).
 """
 
 import hashlib
@@ -39,52 +23,49 @@ def create_pck(output_path):
         "version": "0.1.0"
     }, indent=2).encode("utf-8")
 
-    file_path = "res://mod_manifest.json".encode("utf-8")
-    file_path_padded_len = len(file_path) + pad4(len(file_path))
-
-    # Calculate header size
-    # Magic(4) + version(4) + major(4) + minor(4) + patch(4) + flags(4) + offset(8) + reserved(64)
-    header_size = 4 + 4 + 4 + 4 + 4 + 4 + 8 + 64
-    # File count(4) + file entry: path_len(4) + path(padded) + offset(8) + size(8) + md5(16)
-    file_table_size = 4 + (4 + file_path_padded_len + 8 + 8 + 16)
-    data_offset = header_size + file_table_size
-
-    # Align data offset to 64 bytes (Godot convention)
-    data_align = (64 - (data_offset % 64)) % 64
-    data_offset += data_align
-
+    file_path = b"res://mod_manifest.json"
+    path_padded_len = len(file_path) + pad4(len(file_path))
     md5 = hashlib.md5(manifest).digest()
 
+    # Build the file table entry first so we know exactly where data starts
+    # Header: 4 + 4 + 4 + 4 + 4 + 4 + 8 + 64 = 96 bytes
+    header_size = 96
+    # File table: count(4) + path_len(4) + path_padded + offset(8) + size(8) + md5(16) + flags(4)
+    file_entry_size = 4 + path_padded_len + 8 + 8 + 16 + 4
+    table_size = 4 + file_entry_size
+
+    # Data starts immediately after the table (no alignment - keep it simple)
+    data_offset = header_size + table_size
+
     with open(output_path, "wb") as f:
-        # Header
+        # --- Header ---
         f.write(b"GDPC")
         f.write(struct.pack("<i", 2))       # Pack version
         f.write(struct.pack("<i", 4))       # Engine major
         f.write(struct.pack("<i", 5))       # Engine minor
         f.write(struct.pack("<i", 1))       # Engine patch
-        f.write(struct.pack("<i", 0))       # Flags
-        f.write(struct.pack("<q", 0))       # File offset (0 = files follow header)
+        f.write(struct.pack("<i", 0))       # Flags (0 = no encryption, absolute offsets)
+        f.write(struct.pack("<q", 0))       # Files base offset
         f.write(b"\x00" * 64)              # Reserved
 
-        # File table
-        f.write(struct.pack("<i", 1))       # File count
+        # --- File table ---
+        f.write(struct.pack("<i", 1))       # 1 file
 
-        # File entry
         f.write(struct.pack("<i", len(file_path)))
         f.write(file_path)
         f.write(b"\x00" * pad4(len(file_path)))
-        f.write(struct.pack("<q", data_offset))  # Offset to file data
-        f.write(struct.pack("<q", len(manifest))) # File size
+        f.write(struct.pack("<q", data_offset))
+        f.write(struct.pack("<q", len(manifest)))
         f.write(md5)
+        f.write(struct.pack("<i", 0))       # Per-file flags
 
-        # Alignment padding
-        current = f.tell()
-        f.write(b"\x00" * (data_offset - current))
+        assert f.tell() == data_offset, f"Expected {data_offset}, got {f.tell()}"
 
-        # File data
+        # --- File data ---
         f.write(manifest)
 
-    print(f"Created PCK: {output_path} ({data_offset + len(manifest)} bytes)")
+    total = data_offset + len(manifest)
+    print(f"Created PCK v2: {output_path} ({total} bytes, data@{data_offset})")
 
 
 if __name__ == "__main__":
