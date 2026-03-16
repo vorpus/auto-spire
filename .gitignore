@@ -1,0 +1,5 @@
+.venv/
+.dotnet-tools/
+decompiled/
+__pycache__/
+*.pyc
