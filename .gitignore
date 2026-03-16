@@ -3,3 +3,6 @@
 decompiled/
 __pycache__/
 *.pyc
+mod/out/
+mod/AutoSpire/bin/
+mod/AutoSpire/obj/
