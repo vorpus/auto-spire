@@ -247,4 +247,33 @@ The game provides these extension points for mods:
 
 ## Progress log
 
-_Update this as we make progress on the mod._
+### 2026-03-16: First mod build + PCK format debugging
+
+**DLL loading: WORKS.** The game finds our PCK in `Contents/MacOS/mods/`, loads `AutoSpire.dll` via `AssemblyLoadContext`, and the assembly loads without errors. The `[ModInitializer("Initialize")]` attribute is properly detected.
+
+**PCK manifest loading: NOT WORKING YET.** `ProjectSettings.LoadResourcePack()` returns true (no error), but `ResourceLoader.Exists("res://mod_manifest.json")` returns false. Our hand-rolled PCK writer has a format issue.
+
+#### What we tried:
+- **v2 PCK, absolute offsets (files_base=0)**: DLL loads, PCK loads, but manifest not found
+- **v3 PCK (matching game's format)**: Crashes the engine with `Unreferenced static string` errors — do NOT use v3
+- **v2 PCK, relative offsets (files_base=data_offset, file offset=0)**: Deployed, not yet tested
+
+#### PCK format notes (Godot 4 pack v2):
+- Magic: `GDPC`, version: `2`, engine: `4.5.1`
+- `files_base_offset` field at header offset 0x18 (int64): when loading, Godot adds this to each file's offset
+- Per-file entry has: path_len(4) + path(padded) + offset(8) + size(8) + md5(16) + flags(4)
+- The flags(4) per-file field is v2-only — v1 doesn't have it
+
+#### Next steps:
+- [ ] Test the relative-offset PCK (files_base=164, file offset=0)
+- [ ] If still failing: install Godot editor to create PCK properly, or find a working community PCK tool
+- [ ] Alternative: skip PCK entirely — Harmony-patch `ModManager.TryLoadModFromPck` to bypass manifest check
+
+#### Mod architecture (ready once PCK loads):
+- HTTP server on `localhost:31452` (background thread)
+- `GET /ping` — health check
+- `GET /state` — full game state JSON (run + combat + player)
+- `GET /combat` — combat-specific state
+- `POST /act` — send commands (play_card, end_turn, use_potion)
+- Uses `RunManager.Instance.DebugOnlyGetState()` and `CombatManager.Instance.DebugOnlyGetState()` for state
+- Uses `CardCmd.AutoPlay()`, `PlayerCmd.EndTurn()`, `PotionModel.EnqueueManualUse()` for commands

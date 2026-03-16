@@ -60,6 +60,23 @@ Mise activates dotnet/python automatically when you `cd` into the project (if yo
 | Game PCK | `.../Resources/Slay the Spire 2.pck` (1.6 GB) |
 | Game logs | `~/Library/Application Support/SlayTheSpire2/logs/godot.log` |
 | Decompiled source | `./decompiled/` (gitignored, generated locally) |
+| Mods directory | `.../SlayTheSpire2.app/Contents/MacOS/mods/` |
+| Mod source | `./mod/AutoSpire/` |
+
+## Building the mod
+
+```bash
+./mod/build.sh    # builds DLL, creates PCK, deploys to game's mods/ dir
+```
+
+This compiles `mod/AutoSpire/` → `AutoSpire.dll`, creates a minimal `AutoSpire.pck` with the mod manifest, and copies both to `SlayTheSpire2.app/Contents/MacOS/mods/`.
+
+After deploying, restart STS2. Enable mods in game settings if prompted. Verify with:
+
+```bash
+grep AutoSpire ~/Library/Application\ Support/SlayTheSpire2/logs/godot.log
+curl http://localhost:31452/ping
+```
 
 ## Decompiling sts2.dll
 
