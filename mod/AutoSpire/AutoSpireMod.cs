@@ -17,6 +17,7 @@ using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.MonsterMoves.Intents;
 using MegaCrit.Sts2.Core.Runs;
@@ -442,7 +443,7 @@ public static class AutoSpireMod
                 return new { error = "invalid_target", targetId = action.TargetId };
         }
 
-        _ = CardCmd.AutoPlay(null!, card, target);
+        _ = CardCmd.AutoPlay(new BlockingPlayerChoiceContext(), card, target);
 
         return new { ok = true, played = card.Id.Entry };
     }
