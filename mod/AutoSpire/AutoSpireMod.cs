@@ -2,10 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
-using System.Threading.Tasks;
+using Godot;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Context;
@@ -19,18 +22,104 @@ using MegaCrit.Sts2.Core.Runs;
 
 namespace AutoSpire;
 
+/// <summary>
+/// [ModuleInitializer] runs when the assembly is first loaded by the CLR,
+/// before ModManager tries to read our PCK. We use this to Harmony-patch
+/// ModManager.TryLoadModFromPck so it handles AutoSpire without needing
+/// a valid Godot PCK file.
+/// </summary>
+public static class ModBootstrap
+{
+    [ModuleInitializer]
+    public static void Bootstrap()
+    {
+        try
+        {
+            var harmony = new Harmony("auto-spire.bootstrap");
+
+            var target = typeof(ModManager).GetMethod("TryLoadModFromPck",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            var prefix = typeof(ModBootstrap).GetMethod(nameof(TryLoadModPrefix),
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            if (target != null && prefix != null)
+            {
+                harmony.Patch(target, prefix: new HarmonyMethod(prefix));
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[AutoSpire] Bootstrap error: {ex}");
+        }
+    }
+
+    /// <summary>
+    /// Intercepts ModManager.TryLoadModFromPck for AutoSpire.pck.
+    /// Skips the PCK manifest check and directly registers the mod + calls our initializer.
+    /// Returns true (skip original) only for our mod; lets all other mods load normally.
+    /// </summary>
+    private static bool TryLoadModPrefix(string pckFilename, DirAccess dirAccess, ModSource source)
+    {
+        if (System.IO.Path.GetFileNameWithoutExtension(pckFilename) != "AutoSpire")
+            return true; // not our mod, run original
+
+        try
+        {
+            Log.Info("[AutoSpire] Bootstrap: intercepting mod load for AutoSpire");
+
+            // Register the mod manually (same as ModManager would)
+            var modsField = typeof(ModManager).GetField("_mods",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            var mods = modsField?.GetValue(null) as List<Mod>;
+
+            var mod = new Mod
+            {
+                pckName = "AutoSpire",
+                modSource = source,
+                wasLoaded = true,
+                assembly = typeof(ModBootstrap).Assembly,
+                assemblyLoadedSuccessfully = true,
+                manifest = new ModManifest
+                {
+                    pckName = "AutoSpire",
+                    name = "AutoSpire",
+                    author = "auto-spire",
+                    description = "Automation bridge for Slay the Spire 2",
+                    version = "0.1.0"
+                }
+            };
+            mods?.Add(mod);
+
+            // Call our initializer
+            AutoSpireMod.Initialize();
+
+            Log.Info("[AutoSpire] Bootstrap: mod registered and initialized successfully");
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"[AutoSpire] Bootstrap error: {ex}");
+        }
+
+        return false; // skip original TryLoadModFromPck for our mod
+    }
+}
+
 [ModInitializer("Initialize")]
 public static class AutoSpireMod
 {
     private static HttpListener? _listener;
     private static CancellationTokenSource? _cts;
     private const int Port = 31452;
+    private static bool _initialized;
 
     public static void Initialize()
     {
+        if (_initialized) return;
+        _initialized = true;
+
         try
         {
-            Log.Info("[AutoSpire] Mod loaded, starting HTTP server...");
+            Log.Info("[AutoSpire] Initializing HTTP server...");
             _cts = new CancellationTokenSource();
             var thread = new Thread(RunServerSync)
             {
@@ -38,7 +127,7 @@ public static class AutoSpireMod
                 Name = "AutoSpire-HTTP"
             };
             thread.Start();
-            Log.Info($"[AutoSpire] HTTP server starting on port {Port}");
+            Log.Info($"[AutoSpire] HTTP server started on port {Port}");
         }
         catch (Exception ex)
         {
@@ -59,7 +148,7 @@ public static class AutoSpireMod
             {
                 try
                 {
-                    var context = _listener.GetContext(); // blocking
+                    var context = _listener.GetContext();
                     ThreadPool.QueueUserWorkItem(_ => HandleRequest(context));
                 }
                 catch (HttpListenerException)
