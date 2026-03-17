@@ -2,6 +2,8 @@
 
 Automating Slay the Spire 2. Read game state, send commands, play intelligently.
 
+[![Demo: Claude playing STS2 via AutoSpire](https://img.youtube.com/vi/SXD6wWn3IX4/maxresdefault.jpg)](https://www.youtube.com/watch?v=SXD6wWn3IX4)
+
 STS2 is a C#/.NET 9 game on a custom Godot 4.5.1 Mono engine ("MegaDot"). It ships with HarmonyLib and a built-in mod loader, which we use to inject a bridge mod that exposes game state over HTTP.
 
 ## Architecture
