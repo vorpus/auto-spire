@@ -18,6 +18,7 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.DevConsole;
+using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.MonsterMoves.Intents;
@@ -466,7 +467,9 @@ public static class AutoSpireMod
             target = combatState.HittableEnemies.FirstOrDefault();
         }
 
-        _ = CardCmd.AutoPlay(new BlockingPlayerChoiceContext(), card, target);
+        // Use PlayCardAction (same as UI) — this spends energy properly
+        var action = new PlayCardAction(card, target);
+        RunManager.Instance.ActionQueueSynchronizer.RequestEnqueue(action);
         return new { ok = true, played = card.Title?.ToString(), index = cardIndex, target = target?.Name };
     }
 
@@ -575,7 +578,8 @@ public static class AutoSpireMod
                 return new { error = "invalid_target", targetId = action.TargetId };
         }
 
-        _ = CardCmd.AutoPlay(new BlockingPlayerChoiceContext(), card, target);
+        var playAction = new PlayCardAction(card, target);
+        RunManager.Instance.ActionQueueSynchronizer.RequestEnqueue(playAction);
 
         return new { ok = true, played = card.Id.Entry };
     }
