@@ -17,6 +17,7 @@ using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.DevConsole;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.MonsterMoves.Intents;
@@ -111,6 +112,7 @@ public static class AutoSpireMod
 {
     private static HttpListener? _listener;
     private static CancellationTokenSource? _cts;
+    private static DevConsole? _console;
     private const int Port = 31452;
     private static bool _initialized;
 
@@ -122,6 +124,7 @@ public static class AutoSpireMod
         try
         {
             Log.Info("[AutoSpire] Initializing HTTP server...");
+            _console = new DevConsole(shouldAllowDebugCommands: true);
             _cts = new CancellationTokenSource();
             var thread = new Thread(RunServerSync)
             {
@@ -177,6 +180,7 @@ public static class AutoSpireMod
                 ("/state", "GET") => GetGameState(),
                 ("/combat", "GET") => GetCombatState(),
                 ("/act", "POST") => HandleAction(context),
+                ("/exec", "POST") => HandleExec(context),
                 ("/ping", "GET") => new { status = "ok", mod = "AutoSpire" },
                 _ => null
             };
@@ -393,7 +397,135 @@ public static class AutoSpireMod
         };
     }
 
-    // --- Action Handling ---
+    // --- Exec: text command interface ---
+
+    private static object HandleExec(HttpListenerContext context)
+    {
+        using var reader = new System.IO.StreamReader(context.Request.InputStream);
+        var cmd = reader.ReadToEnd().Trim();
+
+        if (string.IsNullOrEmpty(cmd))
+            return new { error = "empty_command" };
+
+        Log.Info($"[AutoSpire] exec: {cmd}");
+
+        var parts = cmd.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var verb = parts[0].ToLowerInvariant();
+
+        try
+        {
+            return verb switch
+            {
+                // Shorthand combat commands
+                "play" => ExecPlay(parts),
+                "end" => ExecEndTurn(),
+                "potion" => ExecPotion(parts),
+                // Pass through to game's dev console (kill, godmode, draw, energy, gold, etc.)
+                _ => ExecConsole(cmd)
+            };
+        }
+        catch (Exception ex)
+        {
+            return new { error = ex.Message, command = cmd };
+        }
+    }
+
+    // play <cardIndex> [targetId]
+    private static object ExecPlay(string[] parts)
+    {
+        if (parts.Length < 2 || !int.TryParse(parts[1], out var cardIndex))
+            return new { error = "usage: play <cardIndex> [targetId]" };
+
+        uint? targetId = parts.Length >= 3 && uint.TryParse(parts[2], out var tid) ? tid : null;
+
+        var combatState = CombatManager.Instance.DebugOnlyGetState();
+        if (combatState == null) return new { error = "not_in_combat" };
+        if (!CombatManager.Instance.IsPlayPhase) return new { error = "not_play_phase" };
+
+        var player = LocalContext.GetMe(combatState);
+        if (player?.PlayerCombatState == null) return new { error = "no_player" };
+
+        var hand = player.PlayerCombatState.Hand.Cards;
+        if (cardIndex < 0 || cardIndex >= hand.Count)
+            return new { error = "invalid_card_index", max = hand.Count - 1 };
+
+        var card = hand[cardIndex];
+        if (!card.CanPlay())
+            return new { error = "card_not_playable", card = card.Id.Entry };
+
+        Creature? target = null;
+        if (targetId.HasValue)
+        {
+            target = combatState.Enemies.FirstOrDefault(e => e.CombatId == targetId.Value)
+                  ?? combatState.Allies.FirstOrDefault(e => e.CombatId == targetId.Value);
+            if (target == null) return new { error = "invalid_target", targetId };
+        }
+        else if (card.TargetType.ToString().Contains("Enemy"))
+        {
+            // Auto-target first hittable enemy if none specified
+            target = combatState.HittableEnemies.FirstOrDefault();
+        }
+
+        _ = CardCmd.AutoPlay(new BlockingPlayerChoiceContext(), card, target);
+        return new { ok = true, played = card.Title?.ToString(), index = cardIndex, target = target?.Name };
+    }
+
+    private static object ExecEndTurn()
+    {
+        var combatState = CombatManager.Instance.DebugOnlyGetState();
+        if (combatState == null) return new { error = "not_in_combat" };
+        if (!CombatManager.Instance.IsPlayPhase) return new { error = "not_play_phase" };
+
+        var player = LocalContext.GetMe(combatState);
+        if (player == null) return new { error = "no_player" };
+
+        PlayerCmd.EndTurn(player, canBackOut: false);
+        return new { ok = true };
+    }
+
+    // potion <index> [targetId]
+    private static object ExecPotion(string[] parts)
+    {
+        if (parts.Length < 2 || !int.TryParse(parts[1], out var potionIndex))
+            return new { error = "usage: potion <index> [targetId]" };
+
+        uint? targetId = parts.Length >= 3 && uint.TryParse(parts[2], out var tid) ? tid : null;
+
+        var combatState = CombatManager.Instance.DebugOnlyGetState();
+        var player = combatState != null ? LocalContext.GetMe(combatState) : null;
+        if (player == null)
+        {
+            var runState = RunManager.Instance.DebugOnlyGetState();
+            if (runState != null) player = LocalContext.GetMe(runState);
+        }
+        if (player == null) return new { error = "no_player" };
+
+        var potions = player.Potions.ToList();
+        if (potionIndex < 0 || potionIndex >= potions.Count)
+            return new { error = "invalid_potion_index", max = potions.Count - 1 };
+
+        var potion = potions[potionIndex];
+        Creature? target = null;
+        if (targetId.HasValue && combatState != null)
+        {
+            target = combatState.Enemies.FirstOrDefault(e => e.CombatId == targetId.Value);
+        }
+
+        potion.EnqueueManualUse(target);
+        return new { ok = true, used = potion.Id.Entry };
+    }
+
+    // Pass to game's dev console: kill, godmode, draw, energy, gold, damage, etc.
+    private static object ExecConsole(string cmd)
+    {
+        if (_console == null)
+            return new { error = "console_not_initialized" };
+
+        var result = _console.ProcessCommand(cmd);
+        return new { ok = result.success, message = result.msg };
+    }
+
+    // --- Action Handling (legacy JSON API) ---
 
     private static object HandleAction(HttpListenerContext context)
     {
