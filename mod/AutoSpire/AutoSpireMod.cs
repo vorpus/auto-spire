@@ -18,6 +18,7 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.DevConsole;
+using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Modding;
@@ -468,9 +469,13 @@ public static class AutoSpireMod
         }
 
         // Use PlayCardAction (same as UI) — this spends energy properly
+        // Must enqueue from the main thread since it touches the scene tree
         var action = new PlayCardAction(card, target);
-        RunManager.Instance.ActionQueueSynchronizer.RequestEnqueue(action);
-        return new { ok = true, played = card.Title?.ToString(), index = cardIndex, target = target?.Name };
+        var cardTitle = card.Title?.ToString();
+        var targetName = target?.Name;
+        Godot.Callable.From(() => RunManager.Instance.ActionQueueSynchronizer.RequestEnqueue(action))
+            .CallDeferred();
+        return new { ok = true, played = cardTitle, index = cardIndex, target = targetName };
     }
 
     private static object ExecEndTurn()
@@ -482,7 +487,8 @@ public static class AutoSpireMod
         var player = LocalContext.GetMe(combatState);
         if (player == null) return new { error = "no_player" };
 
-        PlayerCmd.EndTurn(player, canBackOut: false);
+        Godot.Callable.From(() => PlayerCmd.EndTurn(player, canBackOut: false))
+            .CallDeferred();
         return new { ok = true };
     }
 
@@ -514,7 +520,7 @@ public static class AutoSpireMod
             target = combatState.Enemies.FirstOrDefault(e => e.CombatId == targetId.Value);
         }
 
-        potion.EnqueueManualUse(target);
+        Godot.Callable.From(() => potion.EnqueueManualUse(target)).CallDeferred();
         return new { ok = true, used = potion.Id.Entry };
     }
 
@@ -524,7 +530,10 @@ public static class AutoSpireMod
         if (_console == null)
             return new { error = "console_not_initialized" };
 
-        var result = _console.ProcessCommand(cmd);
+        CmdResult result = default;
+        var done = new ManualResetEventSlim(false);
+        Godot.Callable.From(() => { result = _console.ProcessCommand(cmd); done.Set(); }).CallDeferred();
+        done.Wait(TimeSpan.FromSeconds(5));
         return new { ok = result.success, message = result.msg };
     }
 
@@ -579,7 +588,8 @@ public static class AutoSpireMod
         }
 
         var playAction = new PlayCardAction(card, target);
-        RunManager.Instance.ActionQueueSynchronizer.RequestEnqueue(playAction);
+        Godot.Callable.From(() => RunManager.Instance.ActionQueueSynchronizer.RequestEnqueue(playAction))
+            .CallDeferred();
 
         return new { ok = true, played = card.Id.Entry };
     }
@@ -597,7 +607,8 @@ public static class AutoSpireMod
         if (player == null)
             return new { error = "no_player" };
 
-        PlayerCmd.EndTurn(player, canBackOut: false);
+        Godot.Callable.From(() => PlayerCmd.EndTurn(player, canBackOut: false))
+            .CallDeferred();
         return new { ok = true };
     }
 
@@ -629,7 +640,7 @@ public static class AutoSpireMod
                 .FirstOrDefault(e => e.CombatId == action.TargetId.Value);
         }
 
-        potion.EnqueueManualUse(target);
+        Godot.Callable.From(() => potion.EnqueueManualUse(target)).CallDeferred();
         return new { ok = true, used = potion.Id.Entry };
     }
 
