@@ -18,6 +18,7 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
+using MegaCrit.Sts2.Core.MonsterMoves.Intents;
 using MegaCrit.Sts2.Core.Runs;
 
 namespace AutoSpire;
@@ -259,9 +260,9 @@ public static class AutoSpireMod
             block = player.Creature.Block,
             gold = player.Gold,
             character = player.Character?.Id.Entry,
-            relics = player.Relics.Select(r => new { id = r.Id.Entry, name = r.GetType().Name }).ToList(),
-            potions = player.Potions.Select(p => new { id = p.Id.Entry, name = p.GetType().Name }).ToList(),
-            deckSize = player.Deck.Cards.Count
+            relics = player.Relics.Select(SerializeRelic).ToList(),
+            potions = player.Potions.Select(SerializePotion).ToList(),
+            deck = player.Deck.Cards.Select(SerializeCard).ToList()
         };
     }
 
@@ -281,16 +282,13 @@ public static class AutoSpireMod
             maxEnergy = pcs.MaxEnergy,
             stars = pcs.Stars,
             hand = pcs.Hand.Cards.Select(SerializeCard).ToList(),
-            drawPileSize = pcs.DrawPile.Cards.Count,
-            discardPileSize = pcs.DiscardPile.Cards.Count,
-            exhaustPileSize = pcs.ExhaustPile.Cards.Count,
+            drawPile = pcs.DrawPile.Cards.Select(SerializeCard).ToList(),
+            discardPile = pcs.DiscardPile.Cards.Select(SerializeCard).ToList(),
+            exhaustPile = pcs.ExhaustPile.Cards.Select(SerializeCard).ToList(),
             powers = player.Creature.Powers.Select(SerializePower).ToList(),
-            relics = player.Relics.Select(r => new { id = r.Id.Entry }).ToList(),
-            potions = player.Potions.Select(p => new
-            {
-                id = p.Id.Entry,
-                targetType = p.TargetType.ToString()
-            }).ToList()
+            relics = player.Relics.Select(SerializeRelic).ToList(),
+            potions = player.Potions.Select(SerializePotion).ToList(),
+            deck = player.Deck.Cards.Select(SerializeCard).ToList()
         };
     }
 
@@ -300,12 +298,15 @@ public static class AutoSpireMod
         {
             id = card.Id.Entry,
             name = card.GetType().Name,
+            title = card.Title?.ToString(),
             type = card.Type.ToString(),
             rarity = card.Rarity.ToString(),
             cost = card.EnergyCost.GetWithModifiers(CostModifiers.All),
             canPlay = card.CanPlay(),
             targetType = card.TargetType.ToString(),
-            title = card.Title?.ToString()
+            upgraded = card.IsUpgraded,
+            upgradeLevel = card.CurrentUpgradeLevel,
+            keywords = card.Keywords.Select(k => k.ToString()).ToList()
         };
     }
 
@@ -320,19 +321,40 @@ public static class AutoSpireMod
             ["maxHp"] = creature.MaxHp,
             ["block"] = creature.Block,
             ["isAlive"] = creature.IsAlive,
+            ["isStunned"] = creature.IsStunned,
             ["powers"] = creature.Powers.Select(SerializePower).ToList()
         };
 
         if (creature.Monster?.NextMove is { } nextMove)
         {
+            var targets = creature.CombatState?.Allies ?? Array.Empty<Creature>();
             result["intent"] = new
             {
                 moveId = nextMove.Id,
-                intents = nextMove.Intents.Select(i => new
-                {
-                    type = i.GetType().Name
-                }).ToList()
+                intents = nextMove.Intents.Select(i => SerializeIntent(i, targets, creature)).ToList()
             };
+        }
+
+        return result;
+    }
+
+    private static object SerializeIntent(AbstractIntent intent, IEnumerable<Creature> targets, Creature owner)
+    {
+        var result = new Dictionary<string, object?>
+        {
+            ["type"] = intent.IntentType.ToString(),
+            ["className"] = intent.GetType().Name
+        };
+
+        if (intent is AttackIntent attack)
+        {
+            try
+            {
+                result["damage"] = attack.GetSingleDamage(targets, owner);
+                result["hits"] = attack.Repeats > 0 ? attack.Repeats : 1;
+                result["totalDamage"] = attack.GetTotalDamage(targets, owner);
+            }
+            catch { /* damage calc may fail outside normal context */ }
         }
 
         return result;
@@ -344,7 +366,29 @@ public static class AutoSpireMod
         {
             id = power.Id.Entry,
             name = power.GetType().Name,
+            type = power.Type.ToString(),
             amount = power.Amount
+        };
+    }
+
+    private static object SerializeRelic(RelicModel relic)
+    {
+        return new
+        {
+            id = relic.Id.Entry,
+            name = relic.GetType().Name,
+            counter = relic.StackCount
+        };
+    }
+
+    private static object SerializePotion(PotionModel potion)
+    {
+        return new
+        {
+            id = potion.Id.Entry,
+            name = potion.GetType().Name,
+            targetType = potion.TargetType.ToString(),
+            rarity = potion.Rarity.ToString()
         };
     }
 
